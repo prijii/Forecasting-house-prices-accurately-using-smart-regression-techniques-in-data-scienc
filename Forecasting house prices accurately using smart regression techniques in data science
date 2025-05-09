@@ -1,0 +1,83 @@
+# House Price Forecasting Using Smart Regression Techniques
+
+# 1. Import Libraries
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import mean_squared_error
+from xgboost import XGBRegressor
+import warnings
+warnings.filterwarnings('ignore')
+
+# 2. Load Datasets
+train_df = pd.read_csv('train.csv')
+test_df = pd.read_csv('test.csv')
+train_ID = train_df['Id']
+test_ID = test_df['Id']
+
+# 3. Drop 'Id' as it's not useful
+train_df.drop(['Id'], axis=1, inplace=True)
+test_df.drop(['Id'], axis=1, inplace=True)
+
+# 4. Log-transform the target for better normality
+train_df["SalePrice"] = np.log1p(train_df["SalePrice"])
+
+# 5. Combine train and test for preprocessing
+y = train_df["SalePrice"]
+all_data = pd.concat((train_df.drop(['SalePrice'], axis=1), test_df), axis=0)
+
+# 6. Fill missing values
+for col in all_data.columns:
+    if all_data[col].dtype == "object":
+        all_data[col] = all_data[col].fillna("None")
+    else:
+        all_data[col] = all_data[col].fillna(all_data[col].median())
+
+# 7. Label encoding for categorical features
+cols = all_data.select_dtypes(include=['object']).columns
+for col in cols:
+    lbl = LabelEncoder()
+    all_data[col] = lbl.fit_transform(all_data[col].astype(str))
+
+# 8. Feature Scaling
+scaler = StandardScaler()
+all_data_scaled = pd.DataFrame(scaler.fit_transform(all_data), columns=all_data.columns)
+
+# 9. Separate data back into train and test
+X = all_data_scaled.iloc[:train_df.shape[0], :]
+X_test = all_data_scaled.iloc[train_df.shape[0]:, :]
+
+# 10. Train/Validation split
+X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 11. Train XGBoost Model
+model = XGBRegressor(
+    n_estimators=1000,
+    learning_rate=0.05,
+    max_depth=3,
+    subsample=0.7,
+    colsample_bytree=0.7,
+    random_state=42
+)
+model.fit(X_train, y_train,
+          eval_set=[(X_valid, y_valid)],
+          early_stopping_rounds=20,
+          verbose=False)
+
+# 12. Evaluate Model
+y_pred = model.predict(X_valid)
+rmse = np.sqrt(mean_squared_error(y_valid, y_pred))
+print(f"Validation RMSE: {rmse:.4f}")
+
+# 13. Predict on Test Data
+preds = model.predict(X_test)
+final_preds = np.expm1(preds)  # reverse the log1p transformation
+
+# 14. Save Submission
+submission = pd.DataFrame({
+    "Id": test_ID,
+    "SalePrice": final_preds
+})
+submission.to_csv("house_price_submission.csv", index=False)
+print("Submission file saved as house_price_submission.csv")
